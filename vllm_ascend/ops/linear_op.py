@@ -239,6 +239,19 @@ class DSV4OProjRowParallelOp(CustomRowParallelOp):
 class OProjRowParallelOp(CustomRowParallelOp):
     def __init__(self, layer):
         super().__init__(layer)
+        self._a2a_recv_buf: torch.Tensor | None = None
+
+    def _get_a2a_recv_buf(self, numel: int, ref_tensor: torch.Tensor) -> torch.Tensor:
+        recv_buf = self._a2a_recv_buf
+        if (
+            recv_buf is None
+            or recv_buf.numel() < numel
+            or recv_buf.dtype != ref_tensor.dtype
+            or recv_buf.device != ref_tensor.device
+        ):
+            recv_buf = torch.empty(numel, dtype=ref_tensor.dtype, device=ref_tensor.device)
+            self._a2a_recv_buf = recv_buf
+        return recv_buf[:numel]
 
     @property
     def comm_group(self):
@@ -259,8 +272,7 @@ class OProjRowParallelOp(CustomRowParallelOp):
         # [batch, dim] -> [tp_size, batch, chunk] -> flattened
         send_buf = input_parallel.reshape(-1, self.tp_size, chunk_size).transpose(0, 1).contiguous().view(-1)
 
-        # Create receive buffer
-        recv_buf = torch.empty(total_batch_size * chunk_size, dtype=input_parallel.dtype, device=input_parallel.device)
+        recv_buf = self._get_a2a_recv_buf(total_batch_size * chunk_size, input_parallel)
 
         # Perform all-to-all communication
         dist.all_to_all_single(recv_buf, send_buf, group=self.comm_group.device_group)

@@ -270,5 +270,38 @@ class TestGetParallelOpShareExpert(unittest.TestCase):
             self.assertEqual(tp_size, 1)
 
 
+class TestOProjRowParallelBuffer(unittest.TestCase):
+    def setUp(self):
+        from vllm_ascend.ops.linear_op import OProjRowParallelOp
+
+        self.op = OProjRowParallelOp.__new__(OProjRowParallelOp)
+        self.op._a2a_recv_buf = None
+
+    def test_reuses_compatible_buffer(self):
+        ref = torch.empty(8, dtype=torch.float16)
+
+        first = self.op._get_a2a_recv_buf(8, ref)
+        second = self.op._get_a2a_recv_buf(4, ref)
+
+        self.assertEqual(first.untyped_storage().data_ptr(), second.untyped_storage().data_ptr())
+        self.assertEqual(second.numel(), 4)
+
+    def test_grows_buffer_for_larger_batch(self):
+        ref = torch.empty(4, dtype=torch.float16)
+
+        first = self.op._get_a2a_recv_buf(4, ref)
+        second = self.op._get_a2a_recv_buf(8, ref)
+
+        self.assertNotEqual(first.untyped_storage().data_ptr(), second.untyped_storage().data_ptr())
+        self.assertEqual(second.numel(), 8)
+
+    def test_reallocates_for_dtype_change(self):
+        first = self.op._get_a2a_recv_buf(8, torch.empty(8, dtype=torch.float16))
+        second = self.op._get_a2a_recv_buf(8, torch.empty(8, dtype=torch.bfloat16))
+
+        self.assertNotEqual(first.untyped_storage().data_ptr(), second.untyped_storage().data_ptr())
+        self.assertEqual(second.dtype, torch.bfloat16)
+
+
 if __name__ == "__main__":
     unittest.main()
